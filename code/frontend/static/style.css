@@ -1,0 +1,852 @@
+/* JuliaMono — monospace with full Latin-Extended + combining-mark coverage, so
+   medieval abbreviation glyphs (⁊ ꝑ ꝗ ꝯ ꝰ, combining tildes/superscripts, etc.)
+   render instead of tofu boxes. SF Mono/Menlo/Consolas lack these glyphs. OFL. */
+@font-face {
+    font-family: "JuliaMono";
+    src: url("/fonts/JuliaMono-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* ---------- Global ---------- */
+:root {
+    --bg: #1e1e1e;
+    --panel: #262626;
+    --panel-border: #3a3a3a;
+    --text: #e5e5e5;
+    --muted: #9a9a9a;
+    --accent: #ffb84d;
+    --accent-strong: #ff9500;
+    --selected-bg: #3a2f10;
+    --selected-border: #ffb84d;
+    --polygon-stroke: rgba(255, 184, 77, 0.5);
+    --polygon-stroke-hover: rgba(255, 184, 77, 0.9);
+    --polygon-fill: rgba(255, 184, 77, 0.05);
+    --polygon-fill-selected: rgba(255, 149, 0, 0.35);
+    --missing: #6a6a6a;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ---------- Topbar ---------- */
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
+}
+
+.topbar h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.tab-nav {
+    display: flex;
+    gap: 4px;
+}
+
+.tab-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.tab-btn:hover {
+    color: var(--text);
+}
+
+.tab-btn.active {
+    background: var(--bg);
+    color: var(--accent);
+    border-color: var(--panel-border);
+}
+
+.page-selector {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.page-selector label {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+#page-select,
+#model-select,
+#upload-model {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+}
+
+#page-select {
+    min-width: 180px;
+}
+
+.topbar-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* ---------- Main / tabs ---------- */
+main {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+.tab-panel {
+    display: none;
+    height: 100%;
+    gap: 8px;
+    padding: 8px;
+}
+
+.tab-panel.active {
+    display: grid;
+}
+
+#tab-transcription.active {
+    grid-template-columns: 1.4fr 1fr;
+}
+
+#tab-alignment.active {
+    grid-template-columns: 1.4fr 1fr 1fr;
+}
+
+#tab-transcribe.active {
+    grid-template-columns: 1.4fr 1fr;
+}
+
+/* ---------- Panes ---------- */
+.pane {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.pane-image {
+    padding: 0;
+    /* pane-image is a flex column: toolbar sits above a scrollable
+       image-scroll region. Overflow is on image-scroll, not pane-image,
+       so the toolbar stays visible while the user pans a zoomed image. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.image-scroll {
+    flex: 1;
+    overflow: auto;
+    padding: 8px;
+    /* Start at top-left so a zoomed image doesn't jump around. */
+    display: block;
+}
+
+.image-wrap {
+    position: relative;
+    /* Width is set by JS (fitWidth * zoom). Wrap sizes to the img; SVG
+       is absolutely-positioned inside and follows via width/height 100%. */
+    display: inline-block;
+    line-height: 0;
+    /* Grab cursor as a "you can drag this" affordance. Polygons override
+       this back to `pointer` via their own rule, so the cursor is
+       context-appropriate (grab over empty parts, pointer over lines). */
+    cursor: grab;
+}
+
+.image-wrap.panning,
+.image-wrap.panning * {
+    /* While the user is actively dragging, force ``grabbing`` even over
+       polygons so the visual doesn't flip to `pointer` mid-drag. */
+    cursor: grabbing !important;
+}
+
+.image-wrap img {
+    display: block;
+    /* Wrap dictates the size; the img fills the wrap. */
+    width: 100%;
+    height: auto;
+    user-select: none;
+    /* Prevent the browser's native drag-image behaviour, which would
+       otherwise start a ghost drag whenever the user click-drags. */
+    -webkit-user-drag: none;
+    user-drag: none;
+    pointer-events: none;
+}
+
+.zoom-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
+}
+
+.zoom-toolbar button {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 26px;
+    line-height: 1.2;
+}
+
+.zoom-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.zoom-level {
+    color: var(--muted);
+    font-size: 11px;
+    padding: 3px 6px;
+    min-width: 42px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.image-wrap svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none; /* pass through except on polygons */
+}
+
+.image-wrap polygon {
+    fill: var(--polygon-fill);
+    stroke: var(--polygon-stroke);
+    stroke-width: 3;
+    cursor: pointer;
+    pointer-events: all;
+    transition: fill 60ms linear, stroke 60ms linear;
+}
+
+.image-wrap polygon:hover {
+    stroke: var(--polygon-stroke-hover);
+}
+
+.image-wrap polygon.selected {
+    fill: var(--polygon-fill-selected);
+    stroke: var(--accent-strong);
+    stroke-width: 4;
+}
+
+/* ---------- Text panes ---------- */
+.pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    flex-shrink: 0;
+}
+
+.pane-title {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.pane-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.pane-actions button, .topbar-actions button, #copy-btn, #download-btn {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.pane-actions button:hover, .topbar-actions button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.line-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+.line-row {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-family: "JuliaMono", "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    border-left: 3px solid transparent;
+}
+
+.line-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.line-row.selected {
+    background: var(--selected-bg);
+    border-left-color: var(--selected-border);
+}
+
+.line-idx {
+    color: var(--muted);
+    text-align: right;
+    user-select: none;
+}
+
+.line-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.line-text.missing {
+    color: var(--missing);
+    font-style: italic;
+}
+
+/* ---------- Statusbar ---------- */
+.statusbar {
+    padding: 6px 16px;
+    background: var(--panel);
+    border-top: 1px solid var(--panel-border);
+    color: var(--muted);
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+/* ---------- Per-line OCR-vs-scholarly diff chips (spec §6.7) ---------- */
+.pane-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.diff-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: auto;
+}
+.diff-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin: 3px 0 1px 34px; /* indent under the text, past the line-idx cell */
+}
+.diff-chip {
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 0 5px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    cursor: default;
+}
+.diff-legend .diff-chip {
+    font-size: 10px;
+}
+.diff-abbreviation { background: rgba(179, 136, 255, 0.18); color: #cdb4ff; border-color: rgba(179, 136, 255, 0.45); }
+/* unmarked contraction (del = de lo): same family as abbreviation, dashed border */
+.diff-abbr-contraction { border-style: dashed; }
+.diff-orthographic { background: rgba(120, 144, 164, 0.15); color: #9fb3c4; border-color: rgba(120, 144, 164, 0.35); }
+.diff-punctuation  { background: rgba(150, 150, 150, 0.14); color: #b0b0b0; border-color: rgba(150, 150, 150, 0.35); }
+.diff-addition     { background: rgba(102, 187, 106, 0.18); color: #9ede9f; border-color: rgba(102, 187, 106, 0.45); }
+.diff-deletion     { background: rgba(229, 115, 115, 0.18); color: #f0a0a0; border-color: rgba(229, 115, 115, 0.45); }
+.diff-substitution { background: rgba(255, 167, 38, 0.18);  color: #ffca7a; border-color: rgba(255, 167, 38, 0.45); }
+.diff-spacing      { background: rgba(38, 198, 218, 0.15);  color: #7fd6e3; border-color: rgba(38, 198, 218, 0.40); }
+
+/* Per-category filters (spec §6.7): the legend chips are toggles — all ON by
+   default; clicking one hides that diff type in the model column (adds
+   .hide-<type> to the tab). Orthographic (u/v·i/j normalization) and scramble
+   spans (alignment failures) are never surfaced as edits, so they stay hidden
+   regardless of the filters. Legend chips live in .diff-legend (not .diff-chips),
+   so the per-type hide rules below never affect the legend itself. */
+.diff-chips .diff-orthographic,
+.diff-chips .diff-grp-scramble { display: none; }
+.filter-chip { cursor: pointer; user-select: none; }
+.filter-chip:not(.active) { opacity: 0.4; text-decoration: line-through; }
+#tab-alignment.hide-substitution .diff-chips .diff-substitution,
+#tab-alignment.hide-addition     .diff-chips .diff-addition,
+#tab-alignment.hide-deletion     .diff-chips .diff-deletion,
+#tab-alignment.hide-abbr-marked      .diff-chips .diff-abbr-marked,
+#tab-alignment.hide-abbr-contraction .diff-chips .diff-abbr-contraction,
+#tab-alignment.hide-spacing      .diff-chips .diff-spacing,
+#tab-alignment.hide-punctuation  .diff-chips .diff-punctuation { display: none; }
+
+/* Model line with no confident scholarly alignment (flagged for review). */
+.line-row.unaligned {
+    border-left: 3px solid #d0a020;
+}
+.line-row.unaligned .line-idx::after {
+    content: " ⚠";
+    color: #d0a020;
+}
+
+/* ---------- Tab 3: upload & transcribe ---------- */
+.upload-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border, #2a2f37);
+    background: var(--panel, #1b1f27);
+    font-size: 13px;
+}
+.upload-bar label { color: var(--muted, #9fb3c4); display: inline-flex; align-items: center; gap: 5px; }
+.upload-file { cursor: pointer; }
+.upload-file input[type="file"] { display: none; }
+.upload-file span {
+    display: inline-block; padding: 5px 10px; border-radius: 4px;
+    border: 1px solid var(--border, #3a4150); background: #232833; color: #cdd6e0;
+    max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-bar select, .upload-bar button {
+    padding: 5px 10px; border-radius: 4px; border: 1px solid var(--border, #3a4150);
+    background: #232833; color: #cdd6e0; cursor: pointer;
+}
+#upload-run { background: #2d5f8a; border-color: #3a76a8; color: #fff; }  /* primary */
+#upload-run:disabled { opacity: 0.5; cursor: default; }
+/* New image = secondary action: muted outline so Transcribe reads as primary. */
+#upload-new { background: transparent; border-color: var(--panel-border, #3a4150); color: var(--muted, #9fb3c4); }
+#upload-new:hover { color: var(--text, #e5e5e5); border-color: var(--accent, #ffb84d); }
+.upload-status { color: var(--muted, #9fb3c4); margin-left: auto; }
+.upload-hint { padding: 16px; color: var(--muted, #9fb3c4); font-size: 13px; line-height: 1.5; }
+
+/* ---------- Tab 4: model comparison + confidence ---------- */
+#tab-compare.active { display: flex; flex-direction: column; padding: 0; gap: 0; }
+.compare-toolbar {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--panel-border);
+}
+.compare-toolbar label { color: var(--muted); font-size: 13px; }
+#compare-page {
+    background: var(--bg); color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 4px; padding: 4px 8px; font-size: 13px; min-width: 200px;
+}
+.compare-legend { display: flex; gap: 18px; align-items: center; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+.lg-item { display: flex; align-items: center; gap: 6px; }
+.lg-hint { font-style: italic; opacity: 0.8; }
+.heatbar { display: inline-flex; gap: 0; }
+.heatbar i { width: 12px; height: 10px; display: inline-block; }
+.heatbar i:nth-child(1){ background: hsl(0,70%,45%); }
+.heatbar i:nth-child(2){ background: hsl(30,70%,45%); }
+.heatbar i:nth-child(3){ background: hsl(60,70%,45%); }
+.heatbar i:nth-child(4){ background: hsl(90,70%,45%); }
+.heatbar i:nth-child(5){ background: hsl(120,70%,45%); }
+.lg-box { border-radius: 3px; padding: 0 4px; color: var(--text); }
+.lg-schol { background: rgba(255, 149, 0, 0.36); }
+.lg-other { background: rgba(120, 160, 255, 0.24); }
+
+.compare-carousel {
+    flex: 1; overflow-y: auto; scroll-snap-type: y proximity;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    padding: 38vh 16px;   /* top/bottom pad so first & last cards can center */
+}
+.cmp-card {
+    scroll-snap-align: center;
+    cursor: pointer;
+    width: min(1000px, 94%);
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px;
+    padding: 12px 16px;
+    opacity: 0.32; transform: scale(0.95);
+    transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+.cmp-card.focus {
+    opacity: 1; transform: scale(1); cursor: default;
+    border-color: var(--accent); box-shadow: 0 6px 26px rgba(0,0,0,0.45);
+}
+.cmp-head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.cmp-id {
+    font-size: 11px; color: var(--muted); font-family: "JuliaMono", "SF Mono", monospace;
+    background: var(--bg); border: 1px solid var(--panel-border);
+    border-radius: 10px; padding: 1px 8px;
+}
+.cmp-id-sch { color: var(--accent); border-color: var(--accent); }
+.cmp-img {
+    display: block; max-width: 100%; height: auto;
+    background: #fff; border-radius: 4px; margin-bottom: 10px;
+    image-rendering: -webkit-optimize-contrast;
+}
+.cmp-rows {
+    display: grid; grid-template-columns: 104px 1fr; gap: 6px 14px;
+    font-family: "JuliaMono", "SF Mono", monospace; font-size: 14px;
+}
+.cmp-row { display: contents; }
+.cmp-label { color: var(--muted); text-align: right; user-select: none; font-size: 12px; padding-top: 3px; }
+.cmp-text { white-space: pre-wrap; word-break: break-word; line-height: 2.0; }
+.cmp-schol .cmp-text { color: var(--text); }
+.cmp-none { color: var(--muted); font-style: italic; }
+/* confidence heat underline (green=high → red=low), set inline per token */
+.cmp-text .tok { border-bottom: 3px solid transparent; padding-bottom: 1px; }
+/* disagreement highlighted by BACKGROUND (adjacent chars merge into a readable
+   band, unlike outlines which overlap). differs-from-other-model = blue tint;
+   differs-from-scholarly = orange tint and takes precedence when both apply. */
+.cmp-text .tok.mism-other { background: rgba(120, 160, 255, 0.24); }
+.cmp-text .tok.mism-schol { background: rgba(255, 149, 0, 0.36); }
+.cmp-text .tok:hover { filter: brightness(1.5); }
+.cmp-card:not(.focus) .cmp-img { max-height: 46px; object-fit: cover; object-position: left; }
+/* instant custom tooltip (native title is too slow on single-char targets) */
+#cmp-tooltip {
+    position: fixed; display: none; z-index: 1000; pointer-events: none;
+    background: #000; color: #fff; border: 1px solid var(--accent);
+    border-radius: 5px; padding: 4px 8px; font-size: 12px; white-space: nowrap;
+    font-family: "JuliaMono", "SF Mono", monospace; box-shadow: 0 3px 12px rgba(0,0,0,0.5);
+}
+
+/* ---- Model dropdown (top bar) ---- */
+.model-select-label { margin-left: 12px; }
+#model-select { max-width: 260px; }
+
+/* ---- Info / guide tab (spec §6.5.28) ---- */
+.info-wrap { padding: 18px 26px; max-width: 1100px; }
+.info-wrap h2 { margin: 0 0 12px; }
+.info-wrap h3 { margin: 20px 0 8px; font-size: 15px; }
+.info-sub { font-weight: normal; font-size: 12px; color: var(--muted, #9fb3c4); }
+.info-tabs ul { margin: 0; padding-left: 20px; line-height: 1.65; }
+.info-tabs li { margin-bottom: 6px; }
+#info-model-table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 6px; }
+#info-model-table th, #info-model-table td {
+    border: 1px solid rgba(150, 160, 175, 0.25); padding: 5px 9px; text-align: left; vertical-align: top;
+}
+#info-model-table thead th { background: rgba(150, 160, 175, 0.12); font-weight: 600; }
+#info-model-table td:nth-child(n+5):nth-child(-n+8) { text-align: right; font-variant-numeric: tabular-nums; }
+#info-model-table tr.origin-ours { background: rgba(120, 200, 120, 0.06); }
+.origin-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.origin-badge.origin-ours {
+    background: rgba(120, 200, 120, 0.18); color: #7fce7f;
+    border: 1px solid rgba(120, 200, 120, 0.40);
+}
+.origin-badge.origin-baseline {
+    background: rgba(150, 160, 175, 0.15); color: var(--muted, #9fb3c4);
+    border: 1px solid rgba(150, 160, 175, 0.35);
+}
+.info-note { font-size: 12px; color: var(--muted, #9fb3c4); margin-top: 8px; }
+.info-refs .apa-list { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.info-refs .apa-list li {
+    margin-bottom: 10px; line-height: 1.55;
+    padding-left: 2em; text-indent: -2em;  /* APA hanging indent */
+}
+.info-refs a { color: var(--accent, #6db3f2); word-break: break-word; }
+/* The full-width panel scrolls (scrollbar at the window's right edge); the
+   .info-wrap only caps the text line-length for readability. */
+#tab-info.active { display: block; overflow-y: auto; }
+
+/* ============ Tab 6: human-in-the-loop review & correct (spec §6.13) ============ */
+#tab-review.tab-panel.active { display: flex; flex-direction: column; overflow: auto; }
+.review-bar {
+    display: flex; align-items: baseline; gap: 1.5rem;
+    padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--panel-border);
+    background: var(--panel); position: sticky; top: 0; z-index: 2;
+}
+.review-progress { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; }
+.review-progress button {
+    background: var(--bg); color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 5px; padding: 0.25rem 0.6rem; cursor: pointer; font-size: 0.9rem;
+}
+.review-progress button:hover { border-color: var(--accent); color: var(--accent); }
+#review-count { min-width: 20rem; color: var(--text); }
+.review-hint { color: var(--muted); font-size: 0.82rem; line-height: 1.4; max-width: 46rem; }
+.review-hint b { color: var(--text); font-weight: 600; }
+
+.review-stage {
+    display: flex; flex-direction: column; gap: 0.9rem;
+    max-width: 60rem; width: 100%; margin: 1.4rem auto; padding: 0 1.5rem;
+}
+.review-imgwrap {
+    background: #f4efe3; border: 1px solid var(--panel-border); border-radius: 8px;
+    padding: 0.5rem; overflow-x: auto; display: flex; justify-content: center;
+}
+.review-imgwrap img { max-width: 100%; image-rendering: -webkit-optimize-contrast; }
+
+.review-meta { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.82rem; }
+.review-id { color: var(--muted); font-family: "JuliaMono", monospace; }
+.review-conf, .review-disag {
+    border: 1px solid var(--panel-border); border-left-width: 4px;
+    border-radius: 4px; padding: 0.1rem 0.5rem; color: var(--text);
+}
+.review-disag { border-left-color: var(--accent); }
+
+.review-models { display: flex; flex-direction: column; gap: 0.4rem; }
+.review-modelrow {
+    display: grid; grid-template-columns: 11rem 1fr; align-items: baseline; gap: 0.75rem;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 6px;
+    padding: 0.45rem 0.7rem; cursor: pointer; transition: border-color 0.1s;
+}
+.review-modelrow:hover { border-color: var(--accent); }
+.rv-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.rv-text { font-family: "JuliaMono", monospace; font-size: 1.05rem; color: var(--text); word-break: break-word; }
+
+#review-input {
+    width: 100%; min-height: 5rem; resize: vertical;
+    background: var(--bg); color: var(--text); caret-color: var(--accent);
+    border: 1px solid var(--selected-border); border-radius: 6px; padding: 0.7rem 0.9rem;
+    font-family: "JuliaMono", monospace; font-size: 1.15rem; line-height: 1.5;
+}
+#review-input:focus { outline: none; border-color: var(--accent-strong); box-shadow: 0 0 0 2px var(--selected-bg); }
+
+.review-actions { display: flex; align-items: center; justify-content: flex-end; gap: 1rem; }
+.review-saved { color: var(--accent); font-size: 0.85rem; }
+#review-save.primary {
+    background: var(--accent); color: #1a1a1a; font-weight: 700; border: none;
+    border-radius: 6px; padding: 0.55rem 1.2rem; cursor: pointer; font-size: 0.95rem;
+}
+#review-save.primary:hover { background: var(--accent-strong); }
+
+/* Scholarly-edition row: the authoritative human reference — set it apart from the model rows. */
+.review-modelrow.rv-schol { border-left: 4px solid #3E7A46; background: #22291f; }
+.review-modelrow.rv-schol .rv-label { color: #7bb585; }
+
+/* Annotator self-confidence picker (Certain / Unsure / Illegible) */
+.review-conf-pick { display: flex; align-items: center; gap: 0.4rem; margin-right: auto; }
+.rcp-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 0.3rem; }
+.rcp-btn {
+    background: var(--bg); color: var(--muted); border: 1px solid var(--panel-border);
+    border-radius: 5px; padding: 0.3rem 0.7rem; cursor: pointer; font-size: 0.85rem;
+}
+.rcp-btn:hover { color: var(--text); border-color: var(--muted); }
+.rcp-btn.active { color: #1a1a1a; font-weight: 600; }
+.rcp-btn[data-conf="certain"].active { background: #3E7A46; border-color: #3E7A46; color: #eafaef; }
+.rcp-btn[data-conf="unsure"].active { background: var(--accent); border-color: var(--accent); }
+.rcp-btn[data-conf="illegible"].active { background: #9C2A24; border-color: #9C2A24; color: #fbeceb; }
+
+/* Review mode toggle (Pending / Corrected / Flagged) */
+.review-modes { display: inline-flex; gap: 0; margin-right: 0.6rem; border: 1px solid var(--panel-border); border-radius: 6px; overflow: hidden; }
+.rvm-btn {
+    background: var(--bg); color: var(--muted); border: none; border-right: 1px solid var(--panel-border);
+    padding: 0.25rem 0.7rem; cursor: pointer; font-size: 0.85rem;
+}
+.rvm-btn:last-child { border-right: none; }
+.rvm-btn:hover { color: var(--text); }
+.rvm-btn.active { background: var(--accent); color: #1a1a1a; font-weight: 600; }
+
+/* Special-glyph insert palette (below the edit field) */
+.review-chars { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.rvc-btn {
+    background: var(--panel); color: var(--text); border: 1px solid var(--panel-border);
+    border-radius: 5px; min-width: 2.2rem; padding: 0.2rem 0.45rem; cursor: pointer;
+    font-family: "JuliaMono", monospace; font-size: 1.2rem; line-height: 1.2;
+}
+.rvc-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--bg); }
+.rvc-btn.rvc-rubric { color: #b83a30; }          /* the red pilcrow, echoing the manuscript rubric */
+.rvc-btn.rvc-rubric:hover { color: #d24a3e; border-color: #b83a30; }
+
+/* ---------- Tab: Text tools ---------- */
+/* Like the Info tab, the PANEL scrolls (full width, scrollbar at the screen
+   edge); .tools-wrap only caps the content width. */
+#tab-tools.active {
+    display: block;
+    overflow-y: auto;
+}
+
+.tools-wrap {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.tools-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 14px 16px;
+}
+
+.tools-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.tools-card-head h3 {
+    margin: 0;
+}
+
+.tools-head-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.tools-head-actions button {
+    background: var(--bg);
+    color: var(--muted);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.tools-head-actions button:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.tools-card .tools-body {
+    margin-top: 6px;
+}
+
+.tools-card.collapsed .tools-body {
+    display: none;
+}
+
+.tools-hint {
+    color: var(--muted);
+    font-size: 12.5px;
+    margin: 0 0 10px;
+}
+
+.tools-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.tools-input label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 4px;
+}
+
+.tools-input input[type="file"] {
+    font-size: 11px;
+    color: var(--muted);
+    max-width: 55%;
+}
+
+.tools-input textarea {
+    width: 100%;
+    height: 140px;
+    box-sizing: border-box;
+    resize: vertical;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 8px;
+    font-family: "JuliaMono", monospace;
+    font-size: 12.5px;
+}
+
+.tools-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.tools-actions button {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 4px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.tools-actions button.primary {
+    background: var(--accent);
+    color: #1a1a1a;
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+.tools-actions button.primary:hover {
+    background: var(--accent-strong);
+}
+
+.tools-status {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.tools-result {
+    margin-top: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+    border-top: 1px solid var(--panel-border);
+    padding-top: 8px;
+}
+
+.tools-counts {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0 0 8px;
+}
+
+.tools-lossless {
+    font-weight: 600;
+    color: #7fd18a;
+}
+
+.tools-lossless.bad {
+    color: #e06c75;
+}
